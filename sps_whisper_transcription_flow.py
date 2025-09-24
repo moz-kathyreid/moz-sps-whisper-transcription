@@ -24,27 +24,15 @@ from metaflow import (
     current,
     step,
     environment,
-    kubernetes,
-    pypi_base, 
-    pypi, 
+    conda,
+    pypi,
     resources, 
-    nvidia
+    nvct
 )
 from metaflow.cards import Markdown
 
 GCS_PROJECT_NAME = "sps-whisper-transcriptions"
 GCS_BUCKET_NAME = "sps-whisper-transcriptions-bucket"
-
-
-# PYPI dependencies
-# https://docs.metaflow.org/scaling/remote-tasks/installing-drivers-and-frameworks
-@pypi_base(
-    python=None, # use whatever is used to start the run which is likely to be something sensible
-    packages={
-        'nvidia-cuda-runtime-cu12': '', 
-        'torch': ''
-    }
-)
 
 class WhisperTranscriptionFlow(FlowSpec):
     """
@@ -67,7 +55,16 @@ class WhisperTranscriptionFlow(FlowSpec):
     
     # INSTALL WHISPER AND DEPENDENCIES 
     # Use GPU resources (we check for them below)
-    @nvidia(gpu=1)
+
+
+    @conda(python='3.10',
+          packages={
+            'ffmpeg': '',
+            'pytorch': '',
+            'torchvision': '',
+            'torchaudio': '', 
+            })
+    @nvct # nvidia needed for CUDA # this must go before @step decorator
     @card(type="default")
     @step 
     def install_whisper_and_deps(self): 
@@ -76,53 +73,69 @@ class WhisperTranscriptionFlow(FlowSpec):
         https://github.com/openai/whisper
         """
         
-        # INSTALL FFMPEG 
+        # Import statements
+        import sys
+        import os 
         import subprocess
-        import os
+        
+        print ("Starting step to install Whisper and dependencies ... ")
+        
     
         # Install using system package manager
         # Note this requires sudo password on the local machine, otherwise it cannot get a PID lock
-        print("Installing ffmpeg binary ... ")
-        if os.path.exists('/usr/bin/apt-get'):
-            #subprocess.run(['sudo', 'apt-get', 'update'], check=True)
-            subprocess.run(['apt-get', 'update'], check=True)
-            #subprocess.run(['sudo', 'apt-get', 'install', '-y', 'ffmpeg'], check=True)
-            subprocess.run(['apt-get', 'install', '-y', 'ffmpeg'], check=True)
+        # sudo doesn't work
+        #print("Installing ffmpeg binary ... ")
+        #if os.path.exists('/usr/bin/apt-get'):
+            #subprocess.run(['apt-get', 'update'], check=True)
+            #subprocess.run(['apt-get', 'install', '-y', 'ffmpeg'], check=True)
         # Add to PATH
         # haven't figured this out yet, may not be needed
         
         # INSTALL WHISPER 
-        # CUDA deps should be installed above with @pypi_base decorator
+        # CUDA deps should be installed above with @nvct decorator
         
+        print ("Whisper: installing Whisper from GitHub ... ")
         # Install whisper from git
         subprocess.run([
             'pip', 'install', 'git+https://github.com/openai/whisper.git'
         ], check=True)
         
-        import sys
-        import whisper 
+        print ("Whisper: checking which whisper and torch packages are installed ... ")
+        subprocess.run([
+            'pip', 'list', '|', 'grep', 'whisper|torch'
+        ], check=True)
+        
+        
+        import whisper
+        
+        print ("Whisper: checking if whisper package imported ... ")
         
         if 'whisper' not in sys.modules:
-            print ('WARNING: Whisper package not imported')
+            print ('WARNING: openai-whisper package not imported')
         else: 
-            print('Whisper package successfully imported')
+            print('openai-whisper package successfully imported')
             
         # Check that CUDA has loaded properly and we can access GPUs
         # Mmmm tasty tasty GPUs :D 
         import torch 
+        import torchaudio
+        import torchvision
         
         print("=== NVIDIA GPU Check ===")
         print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
         print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
         
+        # TODO: Raise proper exceptions with a try except block
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
                 memory_total = torch.cuda.get_device_properties(i).total_memory
                 print(f"  Total memory: {memory_total / 1024**3:.1f} GB")
-        
+        else: # stop the flow
+            print("ERROR: torch.cuda is not available, exiting.")
+            self.next(self.end)
+           
         self.next(self.get_datasets)
-    
     
     @card(type="default")
     @step
