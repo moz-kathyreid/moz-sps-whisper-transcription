@@ -15,6 +15,7 @@
 # 4. Export inferenced transcriptions to a downloadable file
 
 import os
+import subprocess
 
 from metaflow import (
     FlowSpec,
@@ -41,6 +42,229 @@ class WhisperTranscriptionFlow(FlowSpec):
     
     # Define an array of the models
     theModels = ['tiny', 'base', 'small', 'medium', 'large-v3']
+    
+    # Define the paths to the .tar.gz files on Google Cloud Storage 
+    sps_path = 'gs://moz-fx-common-voice-prod/path/to/file.txt'
+    
+    # Define all the locales for spontaneous speech 
+    spsLocales = [ 'aat', # Arvanitika
+                'ady', # Adyghe
+                'aln', # Gheg Albanian
+                'an', # Aragonese
+                'ba', # Bashkir
+                'bas', # Basaa
+                'bew', # Betawi
+                'br', # Breton
+                'brx', # Bodo
+                'bsy', # Sabah Bisaya
+                'bxk', # Bukusu
+                'ca', # Catalan
+                'cdo', # Eastern Min
+                'cgg', # Chiga
+                'cpx', # Heng Hua
+                'cy', # Welsh
+                'de', # German
+                'el-CY', # Greek Cypriot
+                'fr', # French
+                'fy-NL', # Frisian
+                'ga-IE', # Irish Gaelic
+                'gl', # Galician
+                'gsw', # Alsatian
+                'gv', # Manx
+                'hac', # Gorani
+                'hch', # Wixárika 
+                'ka', # Georgian
+                'kbd', # Kabardian
+                'kcn', # Nubi
+                'koo', # Konzo
+                'kzi', # Kelabit
+                'led', # Lendu
+                'lij', # Ligurian
+                'lke', # Kenyi
+                'lth', # Thur
+                'lv', # Latvian
+                'meh', # Mixteco Yucuhiti 
+                'mel', # Melanau
+                'mmc', # Michoacán Mazahua
+                'ms-MY', # Malaysian
+                'msi', # Sabah Malay
+                'pne', # Western Penan
+                'qxp', # Puno Quechua
+                'ru', # Russian
+                'ruc', # Ruuli
+                'rwm', # Amba
+                'sco', # Scots
+                'sdo', # Serian Bidayuh
+                'seh', # Sena
+                'snv', # Sa'ban
+                'tob', # Toba Qom
+                'top', # Papantla Totonac
+                'tr', # Turkish
+                'ttj', # Rutoro
+                'ukv', # Kuku
+                'ush', # Ushojo
+                'xkl' #Kenya
+    ]
+    
+    # Define the locales supported by Whisper
+    whisperLocales = [
+                'en', # English
+                'zh', # Chinese 
+                'de', # German 
+                'es', # Spanish
+                'ru', # Russian
+                'ko', # Korean 
+                'fr', # French 
+                'ja', # Japanese
+                'pt', # Portuguese
+                'tr', # Turkish 
+                'pl', # Polish 
+                'ca', # Catalan 
+                'nl', # Dutch 
+                'ar', # Arabic 
+                'sv', # Swedish 
+                'it', # Italian
+                'id', # Indonesian
+                'hi', # Hindi 
+                'fi', # Finnish 
+                'vi', # Vietnamese
+                'he', # Hebrew 
+                'uk', # Ukrainian 
+                'el', # Greek
+                'ms', # Malay # Note we have this as ms-MY but I think they're the same 
+                'cs', # Czech 
+                'ro', # Romanian 
+                'da', # Danish 
+                'hu', # Hungarian 
+                'ta', # Tamil 
+                'no', # Norwegian # Not sure if Nynorsk or Bokmal 
+                'th', # Thai 
+                'ur', # Urdu 
+                'hr', # Croatian 
+                'bg', # Bulgarian 
+                'lt', # Lithuanian 
+                'la', # Latin 
+                'mi', # Maori 
+                'ml', # Malayalam
+                'cy', # Welsh 
+                'sk', # Slovak 
+                'te', # Telugu 
+                'fa', # Persian 
+                'lv', # Latvian 
+                'bn', # Bengali 
+                'sr', # Serbian 
+                'az', # Azerbaijani 
+                'sl', # Slovenian 
+                'kn', # Kannada 
+                'et', # Estonian 
+                'mk', # Macedonian 
+                'br', # Breton 
+                'eu', # Basque 
+                'is', # Icelandic 
+                'hy', # Armenian NOTE we use a different code for Armenian too hy-AM
+                'ne', # Nepali 
+                'mn', # Mongolian 
+                'bs', # Bosnian
+                'kk', # Kazakh 
+                'sq', # Albanian 
+                'sw', # Swahili 
+                'gl', # Galician 
+                'mr', # Marathi 
+                'pa', # Punjabi 
+                'si', # Sinhala
+                'km', # Khmer
+                'sn', # Shona 
+                'yo', # Yoruba 
+                'so', # Somali 
+                'af', # Afrikaans 
+                'oc', # Occitan 
+                'ka', # Georgian 
+                'be', # Belarusian 
+                'tg', # Tajik 
+                'sd', # Sindhi 
+                'gu', # Gujarati 
+                'am', # Amharic 
+                'yi', # Yiddish 
+                'lo', # Lao 
+                'uz', # Uzbek 
+                'fo', # Faroese 
+                'ht', # Haitian Creole 
+                'ps', # Pashto 
+                'tk', # Turkmen 
+                'nn', # Nynorsk NOTE this is different to bokmal - we use different language codes
+                'mt', # Maltese 
+                'sa', # Sanskrit 
+                'lb', # Luxembourgish 
+                'my', # Myanmar - Burmese 
+                'bo', # Tibetan 
+                'tl', # Tagalog 
+                'mg', # Malagasy 
+                'as', # Assamese 
+                'tt', # Tatar 
+                'haw', # Hawaiian 
+                'ln', # Lingala
+                'ha', # Hausa 
+                'ba', # Bashkir 
+                'jw', # Javanese NOTE THIS IS THE WRONG CODE I have raised PR https://github.com/openai/whisper/pull/2669
+                'su', # Sundanese 
+                'yue', # Cantonese
+    ]
+    
+    
+    
+    def determineLanguageSupport (self, localeList, whisperList): 
+        """ 
+        Determines the language support in Whisper for a given locale, 
+        and if not supported, uses the langcodes library
+        to determine the closest 
+
+        Args:
+            localeList (list): list of locales in ISO-639-1 or ISO-639-3 format
+            whisperList (list): list of locales supported by Whisper given at https://github.com/openai/whisper/blob/main/whisper/tokenizer.py
+        Returns: 
+            return (object): object containing 'locale', 'whisper_supported', 'closest_language'
+        """
+        returnArr = [] # an array of dicts 
+        
+        print('Matching sps locales to Whisper supported locales ...')
+        print('There are ', len(localeList), ' locales to match against ', len(whisperList), ' locales supported by Whisper.')
+        
+        print ("Installing langcodes ... ")
+        subprocess.run(['pip', 'install', 'langcodes'], check=True)
+        import langcodes
+
+        
+        for spsLocale in localeList: 
+            
+            # Initialise Dict 
+            thisLocale = {} 
+            thisLocale['locale'] = spsLocale 
+            thisLocale['whisper_supported'] = False # False by default 
+            thisLocale['closest_language'] = None # None by default
+         
+            for whisperLocale in whisperList: 
+                # check if there is a match
+                if (spsLocale == whisperLocale): 
+                    thisLocale['whisper_supported'] = True 
+                    break # don't keep searching
+            
+            # find the closest language if we don't have support 
+            if not thisLocale['whisper_supported'] : 
+                desired = thisLocale['locale']
+                available = whisperList
+                match = langcodes.closest_match(desired, available)
+                thisLocale['closest_language'] = match # this should be a tuple of the language code and the match score
+            
+        returnArr.append(thisLocale) 
+        return(returnArr)
+            
+    
+    # sps-corpus-1.0-2025-09-05-aat.tar.gz
+    gcs_uri = 'gs://your-bucket/common-voice-prod-prod-bundler/sps-corpus-1.0-2025-09-05'
+    print(gcs_uri)
+    
+    
+
 
     # START FLOW 
     @card(type="default")
@@ -52,10 +276,33 @@ class WhisperTranscriptionFlow(FlowSpec):
         print ("Starting flow ... ")
         # I know that the Whisper deps step works so skipping to the next one 
         # self.next(self.install_whisper_and_deps)
-        self.next(self.get_datasets)
+        self.next(self.get_locales)
 
-    
-    
+    @conda(python='3.10',
+          packages={
+            
+            })
+    @card(type="default")
+    @step
+    def get_locales (self): 
+        """
+        Define the locales that will be processed
+        
+        We need to know if the locale is Whisper-supported
+        because if it's not then we need to define which is the closest language
+        using the langcodes library 
+        https://github.com/rspeer/langcodes?tab=readme-ov-file#comparing-and-matching-languages
+        
+        To determine if the language is Whisper supported, the file to check is the Tokenizer file in the Whisper source 
+        https://github.com/openai/whisper/blob/main/whisper/tokenizer.py
+        Note: we are NOT transcribing English en in this run 
+        """
+        
+        theLocales = self.determineLanguageSupport(self.spsLocales, self.whisperLocales)
+        print(theLocales)
+
+
+        self.next(self.get_datasets)
     
     @conda(python='3.10',
           packages={
@@ -119,6 +366,8 @@ class WhisperTranscriptionFlow(FlowSpec):
         # If we can get to this point I know that the credentials are OK and I can start bringing in the tar files 
         
         # Connected successfully, now I want to pull in the `tar.gz` files somehow
+        gcs_uri = 'gs://your-bucket/path/to/file.txt'
+        local_path = 'downloaded_file.txt'
         
 
 
