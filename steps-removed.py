@@ -149,3 +149,16 @@
             f.write(self.test_transcription)
            
         self.next(self.get_datasets)
+        
+        
+        
+        
+                # Verify credentials are set
+        creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+        if not creds_path:
+            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS not set")
+        
+        if not os.path.exists(creds_path):
+            raise ValueError(f"Credentials file not found: {creds_path}")
+        
+        print(f"✓ Using credentials from: {creds_path}")

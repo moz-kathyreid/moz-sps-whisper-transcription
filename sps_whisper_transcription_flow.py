@@ -37,14 +37,18 @@ class WhisperTranscriptionFlow(FlowSpec):
     This flow is designed to transcribe Spontaneous Speech datasets
     """
     
-    # Sample file 
+    # Sample file used to prove Whisper deps are working
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)
     
     # Define an array of the models
     theModels = ['tiny', 'base', 'small', 'medium', 'large-v3']
     
     # Define the paths to the .tar.gz files on Google Cloud Storage 
-    sps_path = 'gs://moz-fx-common-voice-prod/path/to/file.txt'
+    sps_bucket = 'common-voice-prod-prod-bundler'
+    # followed by the actual language-specific dataset
+    # e.g. sps-corpus-1.0-2025-09-05-aat.tar.gz
+    sps_version = 'sps-corpus-1.0-2025-09-05'
+    sps_filetype = 'tar.gz' # in case it ever changes
     
     # Define all the locales for spontaneous speech 
     spsLocales = [ 'aat', # Arvanitika
@@ -233,7 +237,6 @@ class WhisperTranscriptionFlow(FlowSpec):
         subprocess.run(['pip', 'install', 'langcodes'], check=True)
         import langcodes
 
-        
         for spsLocale in localeList: 
             
             # Initialise Dict 
@@ -255,17 +258,40 @@ class WhisperTranscriptionFlow(FlowSpec):
                 match = langcodes.closest_match(desired, available)
                 thisLocale['closest_language'] = match # this should be a tuple of the language code and the match score
             
-        returnArr.append(thisLocale) 
+            returnArr.append(thisLocale) 
         return(returnArr)
+    
+    def determineTranscriptionLanguage(self, locale='en', whisper_supported=False, closest_language=('und', 1000)): 
+        """
+        Determines the language(s) for transcription
             
-    
-    # sps-corpus-1.0-2025-09-05-aat.tar.gz
-    gcs_uri = 'gs://your-bucket/common-voice-prod-prod-bundler/sps-corpus-1.0-2025-09-05'
-    print(gcs_uri)
-    
-    
-
-
+        Args:
+            locale (str): a locale in ISO-639-1 or ISO-639-3 format
+            whisper_supported (Boolean): whether Whisper supports this locale, given by determineLanguageSupport() 
+            closest_language (tuple): the closest language in ISO-639-1 format, and a score between 1 and 1000 determining closeness of match, lower is better
+                
+        Returns: 
+            return (list): a list of one or more locales in ISO-639-1 or ISO-639-3 format
+        """
+            
+        # TODO: error checking in case, e.g. an invalid locale is passed
+            
+        transcriptionLanguage = [] 
+            
+        if (whisper_supported): 
+            # supported by Whisper, use the Whisper locale 
+            transcriptionLanguage.append(locale)
+        else: 
+            if (closest_language[0] == 'und'): # undefined 
+                transcriptionLanguage.append('en')
+                transcriptionLanguage.append('') # we want to transcribe in both en and _no_ specified language 
+            else : # a closest language has been defined 
+                transcriptionLanguage.append(closest_language[0])
+                    
+        return(transcriptionLanguage)
+            
+            
+            
     # START FLOW 
     @card(type="default")
     @step
@@ -298,9 +324,8 @@ class WhisperTranscriptionFlow(FlowSpec):
         Note: we are NOT transcribing English en in this run 
         """
         
-        theLocales = self.determineLanguageSupport(self.spsLocales, self.whisperLocales)
-        print(theLocales)
-
+        self.theLocales = self.determineLanguageSupport(self.spsLocales, self.whisperLocales)
+        print(len(self.theLocales), ' locales were processed.')
 
         self.next(self.get_datasets)
     
@@ -330,6 +355,13 @@ class WhisperTranscriptionFlow(FlowSpec):
         
         import os
         import subprocess
+        import io 
+        import tarfile 
+        import csv
+        
+        print ("Installing pandas ... ")
+        subprocess.run(['pip', 'install', 'pandas'], check=True)
+        import pandas as pd
         
         # conda doesn't have dotenv
         subprocess.run([
@@ -344,34 +376,263 @@ class WhisperTranscriptionFlow(FlowSpec):
         from dotenv import load_dotenv
         from google.cloud import storage
         
-        
         # Load environment variables
         load_dotenv()
         
-        # Verify credentials are set
-        creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-        if not creds_path:
-            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS not set")
-        
-        if not os.path.exists(creds_path):
-            raise ValueError(f"Credentials file not found: {creds_path}")
-        
-        print(f"✓ Using credentials from: {creds_path}")
+
         
         # Test GCS connection
-        
         project_id = os.environ.get('GCP_PROJECT_ID')
         client = storage.Client(project=project_id)
         print(f"✓ Connected to GCP project: {project_id}")
         # If we can get to this point I know that the credentials are OK and I can start bringing in the tar files 
         
         # Connected successfully, now I want to pull in the `tar.gz` files somehow
-        gcs_uri = 'gs://your-bucket/path/to/file.txt'
-        local_path = 'downloaded_file.txt'
+        test_locale = 'aat' # for testing
+        bucket = client.bucket(self.sps_bucket)
+
+        print('bucket is: ', bucket)
+        print('bucket name: ', bucket.name)
+
+        path =  self.sps_version + '/' + self.sps_version + '-' + test_locale + '.' + self.sps_filetype
+        print('path is: ', path)
+        print('full GCS path: gs://{}/{}'.format(bucket.name, path))
+
+        blob = bucket.blob(path)
+        print('blob is: ', blob)
+
+        # Now check if it exists
+        try:
+            exists = blob.exists()
+            print(f"File exists: {exists}")
+            if exists:
+                print(f"Size: {blob.size} bytes")
+        except Exception as e:
+            print(f"Cannot check existence: {type(e).__name__}: {e}")
+
+        # Also try listing what's actually in the bucket
+        try:
+            print('\nFiles in bucket with similar names:')
+            # we're probably not going to have 100 in there for a while
+            # but I want to see what we actually have
+            # also I wonder why -aat is not showing here ... 
+            blobs = bucket.list_blobs(prefix=self.sps_version, max_results=100)
+            for b in blobs:
+                print('  -', b.name)
+        except Exception as e:
+            print('error listing bucket: ', type(e).__name__, str(e))
         
+        # Download and extract one of the tar files to make sure I can extract it
+        # Then I will loop over the files when I have this process nailed down a bit more 
+        tar_bytes = blob.download_as_bytes()
+        
+        # the directory structure for the untarred files is: 
+        #    sps-corpus-1.0-2025-09-05-[language_code]
+        #      audios/
+        #      ss-corpus-[language_code].tsv
+        #      ss-reported-audios-[language_code].tsv
+    
+        
+        file_to_extract = 'sps-corpus-1.0-2025-09-05-aat/ss-corpus-aat.tsv'
+        
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
+            # Extract a specific file and read it
+            print('Untar-ing file ...', file_to_extract)
+            testfile = tar.getmember(file_to_extract)
+            f = tar.extractfile(testfile)
+            self.testtar = f.read().decode('utf-8')
+            
+            print('Putting the TSV file into a pandas dataframe ...')
+            # handle commas in the TSV file by quoting them
+            # otherwise you will get the error similar to 
+            # pandas.errors.ParserError: Error tokenizing data. C error: Expected 10 fields in line 17, saw 14
+            self.df = pd.read_csv(io.StringIO(self.testtar), sep='\t', quoting=csv.QUOTE_ALL, header=0)
+            
+        print('Saving pandas dataframe ...')
+        # save the pandas dataframe to a file and have Metaflow store it as an artefact
+        self.test_tsv = self.df.to_csv(sep='\t', index=True) # explicit true row index so I remember to remove if needed
+            
+        print('Saving tsv to disk ...')
+        # also save to disk
+        with open('test.tsv', 'w') as f:
+            f.write(self.test_tsv)
 
 
+        self.next(self.do_transcription)
+    
+    # INSTALL WHISPER AND DEPENDENCIES 
+    # Use GPU resources (we check for them below)
+    @conda(python='3.10',
+          packages={
+            'ffmpeg': '',
+            'pytorch': '',
+            'torchvision': '',
+            'torchaudio': '', 
+            'tqdm': '', 
+            'pandas': ''
+            })
+    @nvct # nvidia needed for CUDA # this must go before @step decorator
+    @card(type="default")
+    @step 
+    def do_transcription(self): 
+        """ 
+        Install Whisper and dependencies 
+        https://github.com/openai/whisper
+        
+        Then perform transcription
+        """
+        
+        # Import statements
+        import sys
+        import os 
+        import subprocess
+        import io 
+        import tarfile 
+        import csv
+        import pandas
+        from tqdm import tqdm 
+        
+        
+        subprocess.run([
+            'pip', 'install', 'google-cloud-storage'
+        ], check=True)
+
+        from google.cloud import storage
+        
+        print ("Starting step to install Whisper and dependencies ... ")
+        
+    
+        # Install using system package manager
+        # Note this requires sudo password on the local machine, otherwise it cannot get a PID lock
+        # sudo doesn't work
+        #print("Installing ffmpeg binary ... ")
+        #if os.path.exists('/usr/bin/apt-get'):
+            #subprocess.run(['apt-get', 'update'], check=True)
+            #subprocess.run(['apt-get', 'install', '-y', 'ffmpeg'], check=True)
+        # Add to PATH
+        # haven't figured this out yet, may not be needed
+        
+        # INSTALL WHISPER 
+        # CUDA deps should be installed above with @nvct decorator
+        
+        print ("Whisper: installing Whisper from GitHub ... ")
+        # Install whisper from git
+        subprocess.run([
+            'pip', 'install', 'git+https://github.com/openai/whisper.git'
+        ], check=True)
+        
+        print ("Whisper: checking which whisper and torch packages are installed ... ")
+        subprocess.run([
+            'pip', 'list', '|', 'grep', 'whisper|torch'
+        ], check=True)
+        
+        
+        import whisper
+        
+        print ("Whisper: checking if whisper package imported ... ")
+        
+        if 'whisper' not in sys.modules:
+            print ('WARNING: openai-whisper package not imported')
+        else: 
+            print('openai-whisper package successfully imported')
+            
+        # Check that CUDA has loaded properly and we can access GPUs
+        # Mmmm tasty tasty GPUs :D 
+        import torch 
+        import torchaudio
+        import torchvision
+        import pandas
+        
+        print("=== NVIDIA GPU Check ===")
+        print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
+        print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+        
+        # TODO: Raise proper exceptions with a try except block
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+                memory_total = torch.cuda.get_device_properties(i).total_memory
+                print(f"  Total memory: {memory_total / 1024**3:.1f} GB")
+        else: # stop the flow
+            print("ERROR: torch.cuda is not available, exiting.")
+            self.next(self.end)
+            
+       
+        # run a test with aat 
+        theLocale = self.theLocales[0]['locale'] # aat
+        transcribe_language = self.determineTranscriptionLanguage(self, self.theLocales[0])
+        print('using transcription language: ', transcribe_language, ' for locale: ', theLocale)
+        
+        whisper_model = []
+        
+        # copy the dataframe to a new one because we don't iterate over the same dataframe we are modifying, poor practice 
+        # we use deepcopy so that it copies content not just pointers 
+        # I should check why I do this but I always do this .. 
+        self.transcription_df = self.df.copy(deep=True)
+        
+        # let's see the column names of the dataframe and add five columns one for each of the Whisper models 
+        print('the columns in the dataframe are: ')
+        print(self.transcription_df.columns)
+        print('adding columns for the transcription for each of the models ... ')
+        
+        for model in self.theModels: 
+            column_name = 'transcription_whisper_' + model
+            self.transcription_df[column_name] = None # default to None value, easier to troubleshoot if transcription b0rks 
+        print(self.transcription_df.columns)
+        
+        # I don't know if tqdm will work with Metaflow 
+        # but I want to see if it does because some of the 
+        # transcriptions will take a while 
+        # and tqdm provides a good visual indicator if we're baby sitting some transcriptions 
+        
+        # set up the GCS connection because we'll be untar-ing the audio on the fly 
+        print('Connecting to GCS to get the compressed audio files ...')
+        project_id = os.environ.get('GCP_PROJECT_ID')
+        client = storage.Client(project=project_id)
+        bucket = client.bucket(self.sps_bucket)
+        path =  self.sps_version + '/' + self.sps_version + '-' + theLocale + '.' + self.sps_filetype
+        print('path is: ', path)
+        blob = bucket.blob(path)
+        print('blob is: ', blob)
+        
+        # iterate through the dataframe using tqdm for visual indication of progress 
+        # we iterate through the *original* dataframe, but *modify* the new one
+        # don't iterate and mutate the same dataframe at once because unexpected results are not your friend 
+        for index, row in tqdm(self.df.iterrows(), total=len(self.transcription_df), desc="Processing rows"):
+            
+            # find the audio file to transcribe 
+            # this is in column 'audio_file' - it gives the path 
+            
+            
+            audio_path = self.sps_version + '-' + theLocale + '/audios/' + self.transcription_df['audio_file']
+            print('Extracting audio: ', audio_path)
+            tar_bytes = blob.download_as_bytes()
+        
+            with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
+                # Extract a specific file and read it
+                print('Untar-ing file ...', audio_path)
+                audio_file = tar.getmember(audio_path)
+                f = tar.extractfile(audio_file)
+                audio_for_transcription = f.read() # do not use decode, we want a binary file
+                
+            whisper_model = []
+            
+            # now we perform the transcriptions 
+            for index, model in enumerate(self.theModels): 
+                whisper_model.append(whisper.load_model(model)) 
+                
+                column_name = 'transcription_whisper_' + model
+                self.transcription_df.loc[index, column_name] = \
+                    (whisper_model[index].transcribe(audio_for_transcription, language=transcribe_language))
+            
+            
+            
+        # output to a tsv file 
+        output_file = 'whisper_transcriptions_' + theLocale
+        self.transcription_df.to_csv(output_file = 'whisper_transcriptions_' + theLocale, sep='\t', index=True)
+           
         self.next(self.end)
+        
 
     @step
     def end(self):
@@ -379,17 +640,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         This is the mandatory 'end' step: it prints some helpful information
         to access the model and the used dataset.
         """
-        import os 
-        
-        gcs_bucket_name = os.environ.get('GCS_BUCKET_NAME')
-        
-        print(
-            f"""
-            Flow complete.
-
-            See artifacts at {gcs_bucket_name}.
-            """
-        )
+        print("End flow")
 
 
 if __name__ == "__main__":
