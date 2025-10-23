@@ -566,6 +566,8 @@ class WhisperTranscriptionFlow(FlowSpec):
         # run a test with aat 
         theLocale = self.theLocales[0]['locale'] # aat
         transcribe_language = self.determineTranscriptionLanguage(self, self.theLocales[0])
+        print(f"Type: {type(transcribe_language)}")
+        print(f"Value: {transcribe_language}")
         print('using transcription language: ', transcribe_language, ' for locale: ', theLocale)
         
         whisper_model = []
@@ -627,9 +629,9 @@ class WhisperTranscriptionFlow(FlowSpec):
             for index, model in enumerate(self.theModels): 
                 whisper_model.append(whisper.load_model(model)) 
                 column_name = 'transcription_whisper_' + model
-                audio, sr = sf.read(io.BytesIO(audio_for_transcription), samplerate=32000)
-                print('Now transcribing using language: ', transcribe_language, ' for file: ', audio, ' with sample rate: ', sr)
-                print('whisper model is: ', whisper_model[index])
+                audio, sr = sf.read(io.BytesIO(audio_for_transcription))
+                
+                print('sr: ', sr)
                 self.transcription_df.loc[index, column_name] = \
                     (whisper_model[index].transcribe(audio, language=transcribe_language))
             
