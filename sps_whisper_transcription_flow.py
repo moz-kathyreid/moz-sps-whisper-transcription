@@ -490,7 +490,6 @@ class WhisperTranscriptionFlow(FlowSpec):
         import tarfile 
         import csv
         import pandas
-        from tqdm import tqdm 
         
         
         subprocess.run([
@@ -536,12 +535,19 @@ class WhisperTranscriptionFlow(FlowSpec):
         else: 
             print('openai-whisper package successfully imported')
             
+        print ("Installing soundfile ... ")
+        subprocess.run([
+            'pip', 'install', 'soundfile'
+        ], check=True)
+        
+            
         # Check that CUDA has loaded properly and we can access GPUs
         # Mmmm tasty tasty GPUs :D 
         import torch 
         import torchaudio
         import torchvision
-        import pandas
+        import pandas as pd
+        import soundfile as sf
         
         print("=== NVIDIA GPU Check ===")
         print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
@@ -557,7 +563,6 @@ class WhisperTranscriptionFlow(FlowSpec):
             print("ERROR: torch.cuda is not available, exiting.")
             self.next(self.end)
             
-       
         # run a test with aat 
         theLocale = self.theLocales[0]['locale'] # aat
         transcribe_language = self.determineTranscriptionLanguage(self, self.theLocales[0])
@@ -580,11 +585,6 @@ class WhisperTranscriptionFlow(FlowSpec):
             self.transcription_df[column_name] = None # default to None value, easier to troubleshoot if transcription b0rks 
         print(self.transcription_df.columns)
         
-        # I don't know if tqdm will work with Metaflow 
-        # but I want to see if it does because some of the 
-        # transcriptions will take a while 
-        # and tqdm provides a good visual indicator if we're baby sitting some transcriptions 
-        
         # set up the GCS connection because we'll be untar-ing the audio on the fly 
         print('Connecting to GCS to get the compressed audio files ...')
         project_id = os.environ.get('GCP_PROJECT_ID')
@@ -598,13 +598,16 @@ class WhisperTranscriptionFlow(FlowSpec):
         # iterate through the dataframe using tqdm for visual indication of progress 
         # we iterate through the *original* dataframe, but *modify* the new one
         # don't iterate and mutate the same dataframe at once because unexpected results are not your friend 
-        for index, row in tqdm(self.df.iterrows(), total=len(self.transcription_df), desc="Processing rows"):
+        for index, row in self.df.iterrows():
             
+            # is Metaflow parallelising rows in the dataframe? 
+            # I am expecting it to process one row at a time 
+            # but I think it's parallelising it which is why it is throwing a ValueError because .. 
+            # the audio is not ONE file it is a Series of files and referencing it is ambiguous 
+            print('processing row: ', index)
             # find the audio file to transcribe 
             # this is in column 'audio_file' - it gives the path 
-            
-            
-            audio_path = self.sps_version + '-' + theLocale + '/audios/' + self.transcription_df['audio_file']
+            audio_path = self.sps_version + '-' + theLocale + '/audios/' + self.df.loc[index, 'audio_file']
             print('Extracting audio: ', audio_path)
             tar_bytes = blob.download_as_bytes()
         
@@ -614,17 +617,21 @@ class WhisperTranscriptionFlow(FlowSpec):
                 audio_file = tar.getmember(audio_path)
                 f = tar.extractfile(audio_file)
                 audio_for_transcription = f.read() # do not use decode, we want a binary file
+                # print('audio for transcription is: ', audio_for_transcription)
+                # don't print the audio file it's bytes
                 
             whisper_model = []
             
             # now we perform the transcriptions 
+            print('now performing transcriptions for this audio ... ')
             for index, model in enumerate(self.theModels): 
                 whisper_model.append(whisper.load_model(model)) 
-                
                 column_name = 'transcription_whisper_' + model
+                audio, sr = sf.read(io.BytesIO(audio_for_transcription), samplerate=32000)
+                print('Now transcribing using language: ', transcribe_language, ' for file: ', audio, ' with sample rate: ', sr)
+                print('whisper model is: ', whisper_model[index])
                 self.transcription_df.loc[index, column_name] = \
-                    (whisper_model[index].transcribe(audio_for_transcription, language=transcribe_language))
-            
+                    (whisper_model[index].transcribe(audio, language=transcribe_language))
             
             
         # output to a tsv file 
