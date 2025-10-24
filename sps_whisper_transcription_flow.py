@@ -489,7 +489,6 @@ class WhisperTranscriptionFlow(FlowSpec):
         import io 
         import tarfile 
         import csv
-        import pandas
         
         
         subprocess.run([
@@ -548,6 +547,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         import torchvision
         import pandas as pd
         import soundfile as sf
+        import numpy as np
         
         print("=== NVIDIA GPU Check ===")
         print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
@@ -630,15 +630,19 @@ class WhisperTranscriptionFlow(FlowSpec):
                 whisper_model.append(whisper.load_model(model)) 
                 column_name = 'transcription_whisper_' + model
                 audio, sr = sf.read(io.BytesIO(audio_for_transcription))
+                audio = audio.astype(np.float32)
                 
                 print('sr: ', sr)
                 self.transcription_df.loc[index, column_name] = \
                     (whisper_model[index].transcribe(audio, language=transcribe_language))
             
+            # something is not correct with the transcribe_language - it's not returning back properly from the function 
+            # or I need to put a loop in here to iterate the list for the case where we want transcriptions in multiple languages 
+            
             
         # output to a tsv file 
         output_file = 'whisper_transcriptions_' + theLocale
-        self.transcription_df.to_csv(output_file = 'whisper_transcriptions_' + theLocale, sep='\t', index=True)
+        self.transcription_df.to_csv(output_file = 'whisper_transcriptions' + '_' + theLocale + '_' + transcribe_language + '.csv', sep='\t', index=True)
            
         self.next(self.end)
         
