@@ -214,7 +214,23 @@ class WhisperTranscriptionFlow(FlowSpec):
                 'yue', # Cantonese
     ]
     
-    
+    class LocaleInfo:
+        def __init__(self, locale, whisper_supported, closest_language):
+            """
+            A class to encapsulate the information about a locale 
+            that is used to represent the language support a locale has from Whisper
+            and the locale's closest language 
+
+            Args:
+                locale (str): a locale in ISO-639-1 or ISO-639-3 format
+                whisper_supported (Boolean): whether Whisper supports this locale, given by determineLanguageSupport() 
+                closest_language (tuple): the closest language in ISO-639-1 format, and a score between 1 and 1000 determining closeness of match, lower is better
+            """
+            
+            self.locale = locale
+            self.whisper_supported = whisper_supported
+            self.closest_language = closest_language
+            
     
     def determineLanguageSupport (self, localeList, whisperList): 
         """ 
@@ -240,54 +256,62 @@ class WhisperTranscriptionFlow(FlowSpec):
         for spsLocale in localeList: 
             
             # Initialise Dict 
-            thisLocale = {} 
-            thisLocale['locale'] = spsLocale 
-            thisLocale['whisper_supported'] = False # False by default 
-            thisLocale['closest_language'] = None # None by default
+            thisLocale = self.LocaleInfo(spsLocale, False, None)
+            # whisper_supported is False by default and closest_language is None by default 
+            print(thisLocale)
          
             for whisperLocale in whisperList: 
                 # check if there is a match
-                if (spsLocale == whisperLocale): 
-                    thisLocale['whisper_supported'] = True 
+                if (thisLocale.locale == whisperLocale): 
+                    thisLocale.whisper_supported = True 
                     break # don't keep searching
             
             # find the closest language if we don't have support 
-            if not thisLocale['whisper_supported'] : 
-                desired = thisLocale['locale']
+            if not thisLocale.whisper_supported: 
+                desired = thisLocale.locale
                 available = whisperList
                 match = langcodes.closest_match(desired, available)
-                thisLocale['closest_language'] = match # this should be a tuple of the language code and the match score
+                thisLocale.closest_language = match # this should be a tuple of the language code and the match score
             
+            print(type(thisLocale))
             returnArr.append(thisLocale) 
+            
+        # return an array of localeInfo objects
         return(returnArr)
     
-    def determineTranscriptionLanguage(self, locale='en', whisper_supported=False, closest_language=('und', 1000)): 
+    def determineTranscriptionLanguage(self, localeInfo): 
         """
         Determines the language(s) for transcription
             
         Args:
-            locale (str): a locale in ISO-639-1 or ISO-639-3 format
-            whisper_supported (Boolean): whether Whisper supports this locale, given by determineLanguageSupport() 
-            closest_language (tuple): the closest language in ISO-639-1 format, and a score between 1 and 1000 determining closeness of match, lower is better
+            localeInfo (object): an object with the following fields 
+            -  locale (str): a locale in ISO-639-1 or ISO-639-3 format
+            -  whisper_supported (Boolean): whether Whisper supports this locale, given by determineLanguageSupport() 
+            -  closest_language (tuple): the closest language in ISO-639-1 format, and a score between 1 and 1000 determining closeness of match, lower is better
                 
         Returns: 
-            return (list): a list of one or more locales in ISO-639-1 or ISO-639-3 format
+            return (list): a list of one or more locales in ISO-639-1 or ISO-639-3 format, each as a string
         """
             
         # TODO: error checking in case, e.g. an invalid locale is passed
             
+        print('now processing: ', localeInfo)
         transcriptionLanguage = [] 
             
-        if (whisper_supported): 
+        if (localeInfo.whisper_supported): 
             # supported by Whisper, use the Whisper locale 
-            transcriptionLanguage.append(locale)
+            transcriptionLanguage.append(localeInfo.locale)
         else: 
-            if (closest_language[0] == 'und'): # undefined 
+            if (localeInfo.closest_language[0] == 'und'): # undefined 
                 transcriptionLanguage.append('en')
                 transcriptionLanguage.append('') # we want to transcribe in both en and _no_ specified language 
             else : # a closest language has been defined 
-                transcriptionLanguage.append(closest_language[0])
+                transcriptionLanguage.append(localeInfo.closest_language[0])
+                # localeInfo.closest_language[1] is how close it is, in case we want to do further processing
                     
+        for language in transcriptionLanguage:
+            print('transcriptionLanguage for ', localeInfo.locale, ' is: ', language)
+            
         return(transcriptionLanguage)
             
             
@@ -410,17 +434,17 @@ class WhisperTranscriptionFlow(FlowSpec):
         except Exception as e:
             print(f"Cannot check existence: {type(e).__name__}: {e}")
 
-        # Also try listing what's actually in the bucket
-        try:
-            print('\nFiles in bucket with similar names:')
+        # Also try listing what's actually in the bucket if we need to
+        #try:
+            #print('\nFiles in bucket with similar names:')
             # we're probably not going to have 100 in there for a while
             # but I want to see what we actually have
             # also I wonder why -aat is not showing here ... 
-            blobs = bucket.list_blobs(prefix=self.sps_version, max_results=100)
-            for b in blobs:
-                print('  -', b.name)
-        except Exception as e:
-            print('error listing bucket: ', type(e).__name__, str(e))
+            #blobs = bucket.list_blobs(prefix=self.sps_version, max_results=100)
+            #for b in blobs:
+                #print('  -', b.name)
+        #except Exception as e:
+            #print('error listing bucket: ', type(e).__name__, str(e))
         
         # Download and extract one of the tar files to make sure I can extract it
         # Then I will loop over the files when I have this process nailed down a bit more 
@@ -565,12 +589,15 @@ class WhisperTranscriptionFlow(FlowSpec):
             
         # run a test with aat 
         theLocale = self.theLocales[0]['locale'] # aat
-        transcribe_language = self.determineTranscriptionLanguage(self, self.theLocales[0])
+        
+        transcribe_language = self.determineTranscriptionLanguage(theLocale)
+        for index, language in enumerate(transcribe_language): 
+            print ('the languages in transcribe_language list are: ', index, language)
+    
+        # transcribe_language should be of type List 
         print(f"Type: {type(transcribe_language)}")
         print(f"Value: {transcribe_language}")
         print('using transcription language: ', transcribe_language, ' for locale: ', theLocale)
-        
-        whisper_model = []
         
         # copy the dataframe to a new one because we don't iterate over the same dataframe we are modifying, poor practice 
         # we use deepcopy so that it copies content not just pointers 
@@ -621,23 +648,26 @@ class WhisperTranscriptionFlow(FlowSpec):
                 audio_for_transcription = f.read() # do not use decode, we want a binary file
                 # print('audio for transcription is: ', audio_for_transcription)
                 # don't print the audio file it's bytes
-                
-            whisper_model = []
+            
             
             # now we perform the transcriptions 
             print('now performing transcriptions for this audio ... ')
             for index, model in enumerate(self.theModels): 
-                whisper_model.append(whisper.load_model(model)) 
+                whisper_model = whisper.load_model(model) 
+                print('loaded model:', whisper_model)
+                
                 column_name = 'transcription_whisper_' + model
                 audio, sr = sf.read(io.BytesIO(audio_for_transcription))
                 audio = audio.astype(np.float32)
                 
                 print('sr: ', sr)
+                print('using model: ', model)
                 self.transcription_df.loc[index, column_name] = \
-                    (whisper_model[index].transcribe(audio, language=transcribe_language))
+                    (whisper_model.transcribe(audio, language=transcribe_language))
             
             # something is not correct with the transcribe_language - it's not returning back properly from the function 
             # or I need to put a loop in here to iterate the list for the case where we want transcriptions in multiple languages 
+            # I also need to error check for the case where the transcribe_language needs to be None and Whisper does a best guess
             
             
         # output to a tsv file 
