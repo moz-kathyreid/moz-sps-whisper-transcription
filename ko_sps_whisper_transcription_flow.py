@@ -60,7 +60,7 @@ class WhisperTranscriptionFlow(FlowSpec):
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)
     
     # Define an array of the models
-    theModels = ['tiny', 'base', 'small', 'medium', 'large-v3']
+    theModels = ['tiny', 'large-v3-turbo', 'large-v3']
     
     # Define the paths to the .tar.gz files on Google Cloud Storage 
     sps_bucket = 'common-voice-prod-prod-bundler'
