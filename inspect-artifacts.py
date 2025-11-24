@@ -3,8 +3,8 @@ from metaflow import Flow, namespace
 # Connect to your Outerbounds setup
 namespace(None)
 
-flow_id = 1436
-locale='aat'
+flow_id = 1466
+locale = 'aln'
 
 # Access your flow
 flow = Flow('WhisperTranscriptionFlow')
@@ -18,22 +18,28 @@ for attr in dir(run.data):
 
 # Access your specific artifacts
 try:
+    hasattr(run.data, 'transcription_df')
     print("\nTranscription DataFrame:")
-    print(run.data.transcription_df)
+    print(type(run.data.transcription_df))
+    print('transcription_df found')
 except:
     print("transcription_df not found")
 
 try:
+    hasattr(run.data, 'transcription_verbose_output')
     print("\nVerbose output:")
-    print(run.data.transcription_verbose_output)
+    print(type(run.data.transcription_verbose_output))
+    print('verbose output found')
 except:
     print("transcription_verbose_output not found")
     
 # Save the DataFrame as TSV
 run.data.transcription_df.to_csv('whisper_transcription' + '_' + locale + '.tsv', sep='\t', index=True)
+print('saved whisper_transcription' + '_' + locale + '.tsv')
 
 # Save the verbose output as JSON
 import json
 filename = 'whisper_transcription_verbose_output' + '_' + locale + '.tsv'
-with open('local_verbose_output.json', 'w') as f:
+with open(filename, 'w') as f:
     json.dump(run.data.transcription_verbose_output, f, indent=2)
+print('saved ' + filename)

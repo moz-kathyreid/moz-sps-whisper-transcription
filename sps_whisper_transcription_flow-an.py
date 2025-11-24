@@ -60,8 +60,13 @@ class WhisperTranscriptionFlow(FlowSpec):
     This flow is designed to transcribe Spontaneous Speech datasets
     """
     
+    # at the moment I haven't looped this to do languages so putting the language here explicitly 
+    currentTranscriptionLocale = 'an'
+    currentTranscriptionLocaleIndex = 3
+    
     # Sample file used to prove Whisper deps are working
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)
+
     
     # Define an array of the models
     # I only want transcriptions from large-v3
@@ -420,7 +425,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         # If we can get to this point I know that the credentials are OK and I can start bringing in the tar files 
         
         # Connected successfully, now I want to pull in the `tar.gz` files somehow
-        test_locale = 'an' # for testing
+        test_locale = self.currentTranscriptionLocale # for testing
         bucket = client.bucket(self.sps_bucket)
 
         print('bucket is: ', bucket)
@@ -465,7 +470,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         #      ss-reported-audios-[language_code].tsv
     
         
-        file_to_extract = 'sps-corpus-1.0-2025-09-05-an/ss-corpus-an.tsv'
+        file_to_extract = 'sps-corpus-1.0-2025-09-05-' + self.currentTranscriptionLocale + '/ss-corpus-' + self.currentTranscriptionLocale + '.tsv'
         
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
             # Extract a specific file and read it
@@ -595,8 +600,8 @@ class WhisperTranscriptionFlow(FlowSpec):
             print("ERROR: torch.cuda is not available, exiting.")
             self.next(self.end)
             
-        # run a test with aat ady aln an
-        theLocale = self.theLocales[3]
+        # run a test with aat 
+        theLocale = self.theLocales[self.currentTranscriptionLocaleIndex]
         print('theLocale is: ', theLocale)
         
         transcribe_language = self.determineTranscriptionLanguage(theLocale)
@@ -608,7 +613,6 @@ class WhisperTranscriptionFlow(FlowSpec):
         for index, language in enumerate(transcribe_language): 
             print('now transcribing using language: ', language, ' which is number ', index, ' of ', len(transcribe_language), ' in the list ... ')
             
-            transcription_verbose_output = [] 
             
             # copy the dataframe to a new one because we don't iterate over the same dataframe we are modifying, poor practice 
             # we use deepcopy so that it copies content not just pointers 
@@ -634,6 +638,8 @@ class WhisperTranscriptionFlow(FlowSpec):
                 print('path is: ', path)
                 blob = bucket.blob(path)
                 #print('blob is: ', blob)
+                
+                self.transcription_verbose_output = [] # to hold the full output from whisper for analysis later
         
                 # we iterate through the *original* dataframe, but *modify* the new one
                 # don't iterate and mutate the same dataframe at once because unexpected results are not your friend 
@@ -677,7 +683,7 @@ class WhisperTranscriptionFlow(FlowSpec):
                         else: # language is blank, whisper should choose, do not explicitly set language param 
                             transcription_output = whisper_model.transcribe(audio)
                             
-                        transcription_verbose_output.append(transcription_output)
+                        self.transcription_verbose_output.append(transcription_output)
                         #print('transcription output: ', transcription_output)
                         
                         self.transcription_df.loc[index, column_name] = transcription_output['text']
@@ -689,7 +695,7 @@ class WhisperTranscriptionFlow(FlowSpec):
             import json
             output_file = 'whisper_transcriptions_verbose_output' + theLocale.locale + '_' + language + '.json'
             with open(output_file, 'w') as f:
-                json.dump(transcription_verbose_output, f, indent=2)
+                json.dump(self.transcription_verbose_output, f, indent=2)
             
         self.next(self.end)
         
