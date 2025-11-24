@@ -60,10 +60,6 @@ class WhisperTranscriptionFlow(FlowSpec):
     This flow is designed to transcribe Spontaneous Speech datasets
     """
     
-    # at the moment I haven't looped this to do languages so putting the language here explicitly 
-    currentTranscriptionLocale = 'aat'
-    currentTranscriptionLocaleIndex = 0
-    
     # Sample file used to prove Whisper deps are working
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)
     
@@ -424,7 +420,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         # If we can get to this point I know that the credentials are OK and I can start bringing in the tar files 
         
         # Connected successfully, now I want to pull in the `tar.gz` files somehow
-        test_locale = currentTranscriptionLocale # for testing
+        test_locale = 'an' # for testing
         bucket = client.bucket(self.sps_bucket)
 
         print('bucket is: ', bucket)
@@ -469,7 +465,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         #      ss-reported-audios-[language_code].tsv
     
         
-        file_to_extract = 'sps-corpus-1.0-2025-09-05-' + currentTranscriptionLocale + '/ss-corpus-' + currentTranscriptionLocale + '.tsv'
+        file_to_extract = 'sps-corpus-1.0-2025-09-05-an/ss-corpus-an.tsv'
         
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
             # Extract a specific file and read it
@@ -599,8 +595,8 @@ class WhisperTranscriptionFlow(FlowSpec):
             print("ERROR: torch.cuda is not available, exiting.")
             self.next(self.end)
             
-        # run a test with aat 
-        theLocale = self.theLocales[currentTranscriptionLocaleIndex]
+        # run a test with aat ady aln an
+        theLocale = self.theLocales[3]
         print('theLocale is: ', theLocale)
         
         transcribe_language = self.determineTranscriptionLanguage(theLocale)
@@ -675,7 +671,12 @@ class WhisperTranscriptionFlow(FlowSpec):
                         print('sr: ', sr)
                         print('using model: ', model)
                         
-                        transcription_output = whisper_model.transcribe(audio, language=language)
+                        # TODO merge into base code later
+                        if language: 
+                            transcription_output = whisper_model.transcribe(audio, language=language)
+                        else: # language is blank, whisper should choose, do not explicitly set language param 
+                            transcription_output = whisper_model.transcribe(audio)
+                            
                         transcription_verbose_output.append(transcription_output)
                         #print('transcription output: ', transcription_output)
                         
