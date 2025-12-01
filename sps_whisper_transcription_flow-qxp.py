@@ -61,8 +61,8 @@ class WhisperTranscriptionFlow(FlowSpec):
     """
     
     # at the moment I haven't looped this to do languages so putting the language here explicitly 
-    currentTranscriptionLocale = 'aln'
-    currentTranscriptionLocaleIndex = 2
+    currentTranscriptionLocale = 'qxp'
+    currentTranscriptionLocaleIndex = 42
     
     # Sample file used to prove Whisper deps are working
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)

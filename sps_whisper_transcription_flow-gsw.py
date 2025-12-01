@@ -61,8 +61,8 @@ class WhisperTranscriptionFlow(FlowSpec):
     """
     
     # at the moment I haven't looped this to do languages so putting the language here explicitly 
-    currentTranscriptionLocale = 'aln'
-    currentTranscriptionLocaleIndex = 2
+    currentTranscriptionLocale = 'gsw'
+    currentTranscriptionLocaleIndex = 22
     
     # Sample file used to prove Whisper deps are working
     sample_file = IncludeFile('sample_file', default='./truth-universally-ack.mp3', is_text=False)
@@ -416,6 +416,8 @@ class WhisperTranscriptionFlow(FlowSpec):
         # Load environment variables
         load_dotenv()
         
+
+        
         # Test GCS connection
         project_id = os.environ.get('GCP_PROJECT_ID')
         client = storage.Client(project=project_id)
@@ -445,6 +447,18 @@ class WhisperTranscriptionFlow(FlowSpec):
         except Exception as e:
             print(f"Cannot check existence: {type(e).__name__}: {e}")
 
+        # Also try listing what's actually in the bucket if we need to
+        #try:
+            #print('\nFiles in bucket with similar names:')
+            # we're probably not going to have 100 in there for a while
+            # but I want to see what we actually have
+            # also I wonder why -aat is not showing here ... 
+            #blobs = bucket.list_blobs(prefix=self.sps_version, max_results=100)
+            #for b in blobs:
+                #print('  -', b.name)
+        #except Exception as e:
+            #print('error listing bucket: ', type(e).__name__, str(e))
+        
         # Download and extract one of the tar files to make sure I can extract it
         # Then I will loop over the files when I have this process nailed down a bit more 
         tar_bytes = blob.download_as_bytes()
@@ -480,6 +494,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         with open('test.tsv', 'w') as f:
             f.write(self.test_tsv)
 
+
         self.next(self.do_transcription)
     
     # INSTALL WHISPER AND DEPENDENCIES 
@@ -511,7 +526,6 @@ class WhisperTranscriptionFlow(FlowSpec):
         import io 
         import tarfile 
         import csv
-        import traceback
         
         
         subprocess.run([
@@ -520,15 +534,29 @@ class WhisperTranscriptionFlow(FlowSpec):
 
         from google.cloud import storage
         
-        print("Starting step to install Whisper and dependencies ... ")
+        print ("Starting step to install Whisper and dependencies ... ")
         
-        print("Whisper: installing Whisper from GitHub ... ")
+    
+        # Install using system package manager
+        # Note this requires sudo password on the local machine, otherwise it cannot get a PID lock
+        # sudo doesn't work
+        #print("Installing ffmpeg binary ... ")
+        #if os.path.exists('/usr/bin/apt-get'):
+            #subprocess.run(['apt-get', 'update'], check=True)
+            #subprocess.run(['apt-get', 'install', '-y', 'ffmpeg'], check=True)
+        # Add to PATH
+        # haven't figured this out yet, may not be needed
+        
+        # INSTALL WHISPER 
+        # CUDA deps should be installed above with @nvct decorator
+        
+        print ("Whisper: installing Whisper from GitHub ... ")
         # Install whisper from git
         subprocess.run([
             'pip', 'install', 'git+https://github.com/openai/whisper.git'
         ], check=True)
         
-        print("Whisper: checking which whisper and torch packages are installed ... ")
+        print ("Whisper: checking which whisper and torch packages are installed ... ")
         subprocess.run([
             'pip', 'list', '|', 'grep', 'whisper|torch'
         ], check=True)
@@ -536,20 +564,21 @@ class WhisperTranscriptionFlow(FlowSpec):
         
         import whisper
         
-        print("Whisper: checking if whisper package imported ... ")
+        print ("Whisper: checking if whisper package imported ... ")
         
         if 'whisper' not in sys.modules:
-            print('WARNING: openai-whisper package not imported')
+            print ('WARNING: openai-whisper package not imported')
         else: 
             print('openai-whisper package successfully imported')
             
-        print("Installing soundfile ... ")
+        print ("Installing soundfile ... ")
         subprocess.run([
             'pip', 'install', 'soundfile'
         ], check=True)
         
             
         # Check that CUDA has loaded properly and we can access GPUs
+        # Mmmm tasty tasty GPUs :D 
         import torch 
         import torchaudio
         import torchvision
@@ -561,6 +590,7 @@ class WhisperTranscriptionFlow(FlowSpec):
         print(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
         print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
         
+        # TODO: Raise proper exceptions with a try except block
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
@@ -569,9 +599,8 @@ class WhisperTranscriptionFlow(FlowSpec):
         else: # stop the flow
             print("ERROR: torch.cuda is not available, exiting.")
             self.next(self.end)
-            return
             
-        # run a test with the specified locale
+        # run a test with aat 
         theLocale = self.theLocales[self.currentTranscriptionLocaleIndex]
         print('theLocale is: ', theLocale)
         
@@ -581,156 +610,95 @@ class WhisperTranscriptionFlow(FlowSpec):
         print('using transcription language: ', transcribe_language, ' for locale: ', theLocale)
         
         print('there are ', len(transcribe_language), ' languages to transcribe in for this locale ... ')
-        
-        for lang_index, language in enumerate(transcribe_language): 
-            print(f'now transcribing using language: "{language}" which is number {lang_index} of {len(transcribe_language)} in the list ... ')
+        for index, language in enumerate(transcribe_language): 
+            print('now transcribing using language: ', language, ' which is number ', index, ' of ', len(transcribe_language), ' in the list ... ')
             
-            # copy the dataframe to a new one because we don't iterate over the same dataframe we are modifying
+            
+            # copy the dataframe to a new one because we don't iterate over the same dataframe we are modifying, poor practice 
+            # we use deepcopy so that it copies content not just pointers 
+            # I should check why I do this but I always do this .. 
             self.transcription_df = self.df.copy(deep=True)
-            
-            # let's see the column names of the dataframe and add columns for each of the Whisper models 
+        
+            # let's see the column names of the dataframe and columns one for each of the Whisper models 
             print('the columns in the dataframe are: ')
             print(self.transcription_df.columns)
             print('adding columns for the transcription for each of the models ... ')
-            
+        
             for model in self.theModels: 
                 column_name = 'transcription_whisper_' + model
-                self.transcription_df[column_name] = None # default to None value
-                    
-            print(self.transcription_df.columns)
-            
-            # set up the GCS connection because we'll be untar-ing the audio on the fly 
-            print('Connecting to GCS to get the compressed audio files ...')
-            project_id = os.environ.get('GCP_PROJECT_ID')
-            client = storage.Client(project=project_id)
-            bucket = client.bucket(self.sps_bucket)
-            path = self.sps_version + '/' + self.sps_version + '-' + theLocale.locale + '.' + self.sps_filetype
-            print('path is: ', path)
-            blob = bucket.blob(path)
+                self.transcription_df[column_name] = None # default to None value, easier to troubleshoot if transcription b0rks 
+                print(self.transcription_df.columns)
+        
+                # set up the GCS connection because we'll be untar-ing the audio on the fly 
+                print('Connecting to GCS to get the compressed audio files ...')
+                project_id = os.environ.get('GCP_PROJECT_ID')
+                client = storage.Client(project=project_id)
+                bucket = client.bucket(self.sps_bucket)
+                path =  self.sps_version + '/' + self.sps_version + '-' + theLocale.locale + '.' + self.sps_filetype
+                print('path is: ', path)
+                blob = bucket.blob(path)
+                #print('blob is: ', blob)
                 
-            self.transcription_verbose_output = [] # to hold the full output from whisper for analysis later
+                self.transcription_verbose_output = [] # to hold the full output from whisper for analysis later
+        
+                # we iterate through the *original* dataframe, but *modify* the new one
+                # don't iterate and mutate the same dataframe at once because unexpected results are not your friend 
+                for index, row in self.df.iterrows():
             
-            # Download tar file once for this language
-            print('Downloading tar file from GCS...')
-            tar_bytes = blob.download_as_bytes()
-            print(f'Downloaded {len(tar_bytes)} bytes')
-            
-            # Iterate through the *original* dataframe, but *modify* the new one
-            for row_index, row in self.df.iterrows():
-                print(f'Processing row: {row_index}')
-                    
-                try:
+                # is Metaflow parallelising rows in the dataframe? 
+                # I am expecting it to process one row at a time 
+                # but I think it's parallelising it which is why it is throwing a ValueError because .. 
+                # the audio is not ONE file it is a Series of files and referencing it is ambiguous 
+                    print('processing row: ', index)
                     # find the audio file to transcribe 
-                    audio_path = self.sps_version + '-' + theLocale.locale + '/audios/' + self.df.loc[row_index, 'audio_file']
-                    print(f'Extracting audio: {audio_path}')
-                        
-                    # Extract audio file from tar
-                    audio_for_transcription = None
-                    try:
-                        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
-                            print('Untar-ing file ...', audio_path)
-                            audio_file = tar.getmember(audio_path)
-                            f = tar.extractfile(audio_file)
-                            audio_for_transcription = f.read()
-                    except KeyError:
-                        print(f'ERROR: Audio file not found in tar: {audio_path}')
-                        for model in self.theModels:
-                            column_name = 'transcription_whisper_' + model
-                            self.transcription_df.loc[row_index, column_name] = 'ERROR: Audio file not found in archive'
-                        continue
-                    except Exception as e:
-                        print(f'ERROR extracting audio from tar: {type(e).__name__}: {e}')
-                        traceback.print_exc()
-                        for model in self.theModels:
-                            column_name = 'transcription_whisper_' + model
-                            self.transcription_df.loc[row_index, column_name] = f'ERROR: Extraction failed - {str(e)}'
-                        continue
-                
-                    # Determine audio format from file extension
-                    audio_format = audio_path.split('.')[-1].lower()
-                    print(f'Detected audio format: {audio_format}')
-                        
+                    # this is in column 'audio_file' - it gives the path 
+                    audio_path = self.sps_version + '-' + theLocale.locale + '/audios/' + self.df.loc[index, 'audio_file']
+                    print('Extracting audio: ', audio_path)
+                    tar_bytes = blob.download_as_bytes()
+        
+                    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode='r:gz') as tar:
+                        # Extract a specific file and read it
+                        print('Untar-ing file ...', audio_path)
+                        audio_file = tar.getmember(audio_path)
+                        f = tar.extractfile(audio_file)
+                        audio_for_transcription = f.read() # do not use decode, we want a binary file
+                        # print('audio for transcription is: ', audio_for_transcription)
+                        # don't print the audio file it's bytes
+            
                     # now we perform the transcriptions 
                     print('now performing transcriptions for this audio ... ')
-                    for model_index, model in enumerate(self.theModels):
-                        try:
-                            print(f'Loading model: {model}')
-                            whisper_model = whisper.load_model(model)
-                                
-                            column_name = 'transcription_whisper_' + model
-                                
-                            # Read audio with explicit format specification
-                            audio = None
-                            sr = None
-                            try:
-                                # try not passing audio format 
-                                audio, sr = sf.read(io.BytesIO(audio_for_transcription))
-                                print(f'Successfully read audio with format: {audio_format}')
-                            except Exception as e:
-                                print(f'Error reading audio file with format {audio_format}: {e}')
-                                # Fallback: try common formats
-                                for fmt in ['WAV', 'FLAC', 'OGG', 'MP3', 'OPUS']:
-                                    try:
-                                        audio, sr = sf.read(io.BytesIO(audio_for_transcription), format=fmt)
-                                        print(f'Successfully read with fallback format: {fmt}')
-                                        break
-                                    except:
-                                        continue
-                                    else:
-                                        raise RuntimeError(f'Could not read audio file with any supported format')
-                                
-                            # Ensure audio was successfully read
-                            if audio is None or sr is None:
-                                raise RuntimeError('Audio or sample rate is None after reading')
-                                
-                            audio = audio.astype(np.float32)
-                                
-                            print(f'Sample rate: {sr}')
-                            print(f'Using model: {model}')
-                                
-                            # Perform transcription
-                            if language:  # if language is not empty string
-                                print(f'Transcribing with explicit language: {language}')
-                                transcription_output = whisper_model.transcribe(audio, language=language)
-                            else:  # language is blank, whisper should choose
-                                print('Transcribing with auto-detected language')
-                                transcription_output = whisper_model.transcribe(audio)
-                                    
-                            self.transcription_verbose_output.append({
-                                'row_index': row_index,
-                                'model': model,
-                                'language': language,
-                                'output': transcription_output
-                            })
-                                
-                            self.transcription_df.loc[row_index, column_name] = transcription_output['text']
-                            print(f'Successfully transcribed row {row_index} with model {model}')
-                                
-                        except Exception as e:
-                            print(f'ERROR transcribing row {row_index} with model {model}: {type(e).__name__}: {e}')
-                            traceback.print_exc()
-                            self.transcription_df.loc[row_index, column_name] = f'ERROR: {str(e)}'
-                            continue
-                except Exception as e:
-                    print(f'ERROR transcribing row {row_index} with model {model}: {type(e).__name__}: {e}')
-                    traceback.print_exc()
-                    self.transcription_df.loc[row_index, column_name] = f'ERROR: {str(e)}'
-                    continue
-
-
-        # output to a tsv file 
-        output_file = 'whisper_transcriptions_' + theLocale.locale + '_' + (language if language else 'auto') + '.tsv'
-        print(f'Saving transcriptions to {output_file}')
-        self.transcription_df.to_csv(output_file, sep='\t', index=True)
+                    for index, model in enumerate(self.theModels): 
+                        whisper_model = whisper.load_model(model) 
                 
-        import json
-        verbose_output_file = 'whisper_transcriptions_verbose_output_' + theLocale.locale + '_' + (language if language else 'auto') + '.json'
-        print(f'Saving verbose output to {verbose_output_file}')
-        with open(verbose_output_file, 'w') as f:
-            json.dump(self.transcription_verbose_output, f, indent=2)
+                        column_name = 'transcription_whisper_' + model
+                        audio, sr = sf.read(io.BytesIO(audio_for_transcription))
+                        audio = audio.astype(np.float32)
                 
-        print('Transcription step completed')
+                        print('sr: ', sr)
+                        print('using model: ', model)
+                        
+                        # TODO merge into base code later
+                        if language: 
+                            transcription_output = whisper_model.transcribe(audio, language=language)
+                        else: # language is blank, whisper should choose, do not explicitly set language param 
+                            transcription_output = whisper_model.transcribe(audio)
+                            
+                        self.transcription_verbose_output.append(transcription_output)
+                        #print('transcription output: ', transcription_output)
+                        
+                        self.transcription_df.loc[index, column_name] = transcription_output['text']
+
+            # output to a tsv file 
+            output_file = 'whisper_transcriptions_' + theLocale.locale + '_' + language + '.tsv'
+            self.transcription_df.to_csv(output_file, sep='\t', index=True)
+            
+            import json
+            output_file = 'whisper_transcriptions_verbose_output' + theLocale.locale + '_' + language + '.json'
+            with open(output_file, 'w') as f:
+                json.dump(self.transcription_verbose_output, f, indent=2)
+            
         self.next(self.end)
+        
 
     @step
     def end(self):

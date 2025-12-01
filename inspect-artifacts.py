@@ -3,8 +3,8 @@ from metaflow import Flow, namespace
 # Connect to your Outerbounds setup
 namespace(None)
 
-flow_id = 1466
-locale = 'aln'
+flow_id = 1606
+locale = 'bxk'
 
 # Access your flow
 flow = Flow('WhisperTranscriptionFlow')
